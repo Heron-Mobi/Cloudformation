@@ -1,0 +1,184 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Resources:
+  TwitterQueue: 
+    Type: AWS::SQS::Queue
+  TwitterInvokeLambda: 
+    Type: AWS::Lambda::Permission
+    Properties: 
+      FunctionName: !Ref LambdaTwitter
+      Action: 'lambda:InvokeFunction'
+      Principal: 'sqs.amazonaws.com'
+      SourceArn: !GetAtt TwitterQueue.Arn
+  TwitterEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt TwitterQueue.Arn
+      FunctionName: !GetAtt LambdaTwitter.Arn
+  
+  TwitterLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: ''
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+  LambdaSignalLambdaPolicy:
+    Type: AWS::IAM::Policy
+    Properties: 
+      Roles:
+        - '{{resolve:ssm:/heron/heron-signal-lambda-rolename}}'
+      PolicyName: 'lambdasignal-send-twitter'
+      PolicyDocument: 
+        Version: '2012-10-17'
+        Statement: 
+          - Effect: 'Allow'
+            Action: 
+              - 'sqs:SendMessage'
+            Resource: !GetAtt TwitterQueue.Arn
+          - Effect: 'Allow'
+            Action: 
+              - 'ssm:GetParameter'
+            Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${TwitterSQSParameter}'
+  TwitterLambdaPolicy:
+    Type: AWS::IAM::Policy
+    Properties: 
+      PolicyName: 'lambdatwitter'
+      PolicyDocument: 
+        Version: '2012-10-17'
+        Statement: 
+          - Effect: 'Allow'
+            Action: 
+              - 'sqs:ReceiveMessage'
+              - 'sqs:DeleteMessage'
+              - 'sqs:GetQueueAttributes'
+              - 'sqs:ChangeMessageVisibility'
+            Resource: !GetAtt TwitterQueue.Arn
+          - Effect: 'Allow'
+            Action: 
+              - 'ssm:GetParameter'
+            Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/heron/heron-video-domain'
+          - Effect: 'Allow'
+            Action: 
+              - 'ssm:GetParameter'
+            Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/heron/video-bucket-name'
+          - Effect: 'Allow'
+            Action: 
+              - 's3:PutObject'
+            Resource: 'arn:aws:s3:::{{resolve:ssm:/heron/video-bucket-name}}/*/*/*'
+      Roles: 
+        - !Ref TwitterLambdaRole
+  LambdaTwitter:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - TwitterLambdaRole
+    Properties:
+      Role: !GetAtt TwitterLambdaRole.Arn
+      Handler: index.lambda_handler
+      Runtime: python3.9
+      Timeout: 25
+      MemorySize: 128
+      Code:
+        ZipFile: |
+          import boto3
+          import os
+          import json
+          from string import Template
+
+          def lambda_handler(event, context):
+              payload = json.loads(event['Records'][0]['body'])
+              date = payload['date']
+              identityid = payload['identityID']
+              twitter_handle = payload['config']['twitter-handle']
+              cam = payload['config']['camera']
+              ssm = boto3.client('ssm')
+              video_domain_param = ssm.get_parameter(
+                Name = '/heron/heron-video-domain',
+                WithDecryption = False
+              )
+              video_domain = video_domain_param['Parameter']['Value']
+
+              indextemplate = Template(''.join((
+                '<!DOCTYPE html><html lang="en">',
+                '<head><meta charset="utf-8">',
+                '<meta name="viewport" content="width=device-width, initial-scale=1">',
+                '<meta name="twitter:card" content="player" />',
+                '<meta name="twitter:site" content="@$twitter_handle" />',
+                '<meta name="twitter:title" content="Live Stream @$twitter_handle" />',
+                '<meta name="twitter:description" content="@$twitter_handle is livestreaming $cam camera." />',
+                '<meta name="twitter:image" content="https://$video_domain/live.png" />',
+                '<meta name="twitter:player" content="https://$video_domain/$identityid/$date/$cam-container.html" />',
+                '<meta name="twitter:player:width" content="480" />',
+                '<meta name="twitter:player:height" content="600" />',
+                '</head><body></body></html>')))
+
+              indexstring = indextemplate.substitute(
+                date = date,
+                identityid = identityid,
+                twitter_handle = twitter_handle,
+                cam = cam,
+                video_domain = video_domain
+              )
+              camtemplate = Template(''.join((
+                  '<html><head><title>Live feed</title></head>',
+                  '<body><script src="https://${video_domain}/hls.js"></script>',
+                  '<center><video height="600" id="video" controls></video></center>',
+                  '<script>',
+                  '  url = "https://${video_domain}/${identityid}/${date}/${cam}-out.m3u8";',
+                  '  var video = document.getElementById("video");',
+                  '  if (Hls.isSupported()) {',
+                  '    var hls = new Hls({',
+                  '      debug: true,',
+                  '    });',
+                  '    hls.loadSource(url);',
+                  '    hls.attachMedia(video);',
+                  '    hls.on(Hls.Events.MEDIA_ATTACHED, function () {',
+                  '      video.play();',
+                  '    });',
+                  '  }',
+                  '  else if (video.canPlayType("application/vnd.apple.mpegurl")) {',
+                  '    video.src = url;',
+                  '    video.addEventListener("canplay", function () {',
+                  '      video.play();',
+                  '    });',
+                  '  }',
+                  '  </script></body></html>')))
+              camstring = camtemplate.substitute(
+                date = date,
+                identityid = identityid,
+                cam = cam,
+                video_domain = video_domain
+              )
+              video_bucket_param = ssm.get_parameter(
+                Name = '/heron/video-bucket-name',
+                WithDecryption = False
+              )
+              video_bucket = video_bucket_param['Parameter']['Value']
+              s3 = boto3.resource('s3')
+              indexobject = s3.Object(
+                  bucket_name = video_bucket, 
+                  key = identityid + '/' + date '/' + 'twitterindex.html'
+              )
+              indexobject.put(Body=indexstring)
+              camobject = s3.Object(
+                  bucket_name = video_bucket, 
+                  key = identityid + '/' + date '/' + cam + '-container.html'
+              )
+              camobject.put(Body=camstring)
+
+
+  TwitterSQSParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/heron/signal-lambda/twitter'
+      Type: String
+      Value: !GetAtt TwitterQueue.QueueName
+
+
+
+

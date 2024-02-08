@@ -1,0 +1,354 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  CertARN:
+    Type: String
+  DomainName:
+    Type: String
+  HostedZone:
+    Type: String
+Resources:
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+      UsernameAttributes:
+        - email
+      Schema:
+        - AttributeDataType: String
+          Name: email
+          Required: false
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !GetAtt UserPool.UserPoolId
+      CallbackURLs: 
+        - !Sub "https://${DomainName}/logout"
+      SupportedIdentityProviders:
+        - COGNITO
+      AllowedOAuthScopes:
+        - aws.cognito.signin.user.admin
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows:
+        - implicit
+  UserPoolDomain:
+    DependsOn: DNSCoreRecordSet
+    Type: AWS::Cognito::UserPoolDomain 
+    Properties:
+      UserPoolId: !Ref UserPool 
+      Domain: 
+          !Join
+            - '.' 
+            - - 'auth'
+              - !Ref DomainName
+      CustomDomainConfig: 
+        CertificateArn: !Ref CertARN
+  IdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      AllowUnauthenticatedIdentities: false
+      CognitoIdentityProviders:
+        - ClientId: !Ref UserPoolClient
+          ProviderName: !GetAtt UserPool.ProviderName
+
+  IdentityPoolRoleAttachment: 
+    Type: AWS::Cognito::IdentityPoolRoleAttachment 
+    Properties: 
+      IdentityPoolId: !Ref IdentityPool
+      Roles: 
+        "authenticated": !GetAtt HeronUserRole.Arn 
+
+
+  HeronUserRole:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    Properties:
+      IdentityPoolId: !Ref IdentityPool
+      Roles:
+        authenticated: !GetAtt HeronUserRole.Arn
+  HeronUserRole:
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: Allow
+            Principal: 
+              Federated: cognito-identity.amazonaws.com
+            Action: 
+              - 'sts:AssumeRoleWithWebIdentity'
+            Condition:
+              StringEquals:
+                'cognito-identity.amazonaws.com:aud': !Ref IdentityPool
+              ForAnyValue:StringLike:
+                'cognito-identity.amazonaws.com:amr': 'authenticated'
+
+  HeronUserS3Policy: 
+    Type: AWS::IAM::Policy
+    Properties: 
+      PolicyName: 'S3Write'
+      PolicyDocument: 
+        Version: '2012-10-17'
+        Statement: 
+          - Effect: 'Allow'
+            Action: 
+              - 's3:PutObject'
+              - 's3:GetObject'
+            Resource:
+              !Join
+                - '/'
+                - - !GetAtt VideoBucket.Arn
+                  - '${cognito-identity.amazonaws.com:sub}'
+                  - '*'
+          - Effect: 'Allow'
+            Action: 
+              - 's3:GetObject'
+              - 's3:PutObject'
+            Resource:
+              !Join
+                - '/'
+                - - !GetAtt ConfigBucket.Arn
+                  - '${cognito-identity.amazonaws.com:sub}'
+                  - '*'
+      Roles: 
+        - !Ref HeronUserRole
+  HeronUserSecretPolicy: 
+    Type: AWS::IAM::Policy
+    Properties: 
+      PolicyName: 'SecretAccess'
+      PolicyDocument: 
+        Version: '2012-10-17'
+        Statement: 
+          - Effect: 'Allow'
+            Action: 
+              - 'secretsmanager:GetSecretValue'
+              - 'secretsmanager:CreateSecret'
+              - 'secretsmanager:DeleteSecret'
+              - 'secretsmanager:PutSecretValue'
+              - 'secretsmanager:UpdateSecret'
+            Resource:
+              !Join
+                - '/'
+                - - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:Heron/UserSecrets'
+                  - '${cognito-identity.amazonaws.com:sub}'
+                  - '*'
+      Roles: 
+        - !Ref HeronUserRole
+
+  ConfigBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccelerateConfiguration:
+        AccelerationStatus: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+  VideoBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccelerateConfiguration:
+        AccelerationStatus: Enabled
+      ObjectLockEnabled:  true
+      ObjectLockConfiguration:
+        ObjectLockEnabled: "Enabled"
+        Rule:
+          DefaultRetention:
+            Mode: GOVERNANCE
+            Days: 1
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      PolicyDocument:
+        Id: !Ref VideoBucket
+        Version: '2012-10-17'
+        Statement:
+          - Sid: CloudfrontGet
+            Action: s3:GetObject
+            Effect: Allow
+            Principal:
+              AWS:
+                !Join
+                  - ""
+                  - - "arn:"
+                    - !Ref AWS::Partition
+                    - ":iam::cloudfront:user/CloudFront Origin Access Identity "
+                    - !Ref OriginAccessIdentity
+            Resource:
+              !Join
+                - ""
+                - - !GetAtt VideoBucket.Arn
+                  - /*
+          - Sid: AllowSSLRequestsOnly
+            Action: s3:*
+            Effect: Deny
+            Resource:
+              - !Sub "arn:aws:s3:::${VideoBucket}"
+              - !Sub "arn:aws:s3:::${VideoBucket}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+            Principal: "*"
+      Bucket: !Ref VideoBucket      
+  OriginAccessIdentity:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: HeronVideo
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Aliases:
+        - !Join
+            - '.' 
+            - - 'video'
+              - !Ref DomainName
+        ViewerCertificate:
+          AcmCertificateArn: !Ref CertARN
+          SslSupportMethod: sni-only
+        Comment: Streams
+        CustomErrorResponses:
+          - ErrorCachingMinTTL: 0
+            ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /404.html
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - GET
+            - HEAD
+          CachedMethods:
+            - GET
+            - HEAD
+          Compress: true
+          DefaultTTL: 60
+          ForwardedValues:
+            Headers: []
+            QueryString: false
+          TargetOriginId: s3site
+          ViewerProtocolPolicy: redirect-to-https
+        CacheBehaviors:
+          - AllowedMethods:
+              - GET
+              - HEAD
+            CachedMethods:
+              - GET
+              - HEAD
+            Compress: true
+            DefaultTTL: 0
+            MaxTTL: 0
+            ForwardedValues:
+              Headers: []
+              QueryString: false
+            PathPattern: '*.m3u8'
+            TargetOriginId: s3site
+            ViewerProtocolPolicy: redirect-to-https
+        Enabled: true
+        HttpVersion: http2
+        IPV6Enabled: true
+        Origins:
+          - Id: s3site
+            DomainName: !Sub ${VideoBucket}.s3.${AWS::Region}.amazonaws.com
+            S3OriginConfig:
+              OriginAccessIdentity: !Sub origin-access-identity/cloudfront/${OriginAccessIdentity.Id}
+        PriceClass: PriceClass_100
+  DNSCoreRecordSet:
+    Type: 'AWS::Route53::RecordSetGroup'
+    Properties:
+      HostedZoneId: !Ref HostedZone
+      RecordSets:
+        - Name: !Ref DomainName #Dummy registration required for Cognito
+          ResourceRecords:
+          - 8.8.8.8
+          TTL: 900
+          Type: A
+  DNSRecordSets:
+    DependsOn: UserPoolDomain
+    Type: 'AWS::Route53::RecordSetGroup'
+    Properties:
+      HostedZoneId: !Ref HostedZone
+      RecordSets:
+        - Name: 
+            !Join
+              - '.' 
+              - - 'video'
+                - !Ref DomainName
+          Type: A
+          AliasTarget:
+            HostedZoneId: Z2FDTNDATAQYW2
+            DNSName: !GetAtt Distribution.DomainName
+        - Name: 
+            !Join
+              - '.' 
+              - - 'auth'
+                - !Ref DomainName
+          Type: A
+          AliasTarget:
+            HostedZoneId: Z2FDTNDATAQYW2
+            DNSName: !GetAtt UserPoolDomain.CloudFrontDistribution
+  VideoBucketParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/heron/video-bucket-name'
+      Type: String
+      Value: !Ref VideoBucket 
+  ConfigBucketParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/heron/config-bucket-name'
+      Type: String
+      Value: !Ref ConfigBucket 
+  UserRoleParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/heron/heron-user-rolename'
+      Type: String
+      Value: !Ref HeronUserRole
+  VideoDomain:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/heron/heron-video-domain'
+      Type: String
+      Value: 
+        !Join
+          - '.' 
+          - - 'video'
+            - !Ref DomainName
+  AuthDomain:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/heron/heron-auth-domain'
+      Type: String
+      Value: 
+        !Join
+          - '.' 
+          - - 'auth'
+            - !Ref DomainName
+
+Outputs:
+  Region:
+    Value: !Ref 'AWS::Region'
+  UserPoolId:
+    Value: !Ref UserPool
+  ClientId:
+    Value: !Ref UserPoolClient
+  IdentityPoolId:
+    Value: !Ref IdentityPool
+  VideoBucket:
+    Value: !Ref VideoBucket
+  ConfigBucket:
+    Value: !Ref ConfigBucket

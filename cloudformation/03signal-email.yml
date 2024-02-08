@@ -1,0 +1,109 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  SourceEmail:
+    Type: String
+Resources:
+  EmailSES:
+    Type: AWS::SES::EmailIdentity
+    Properties:
+      EmailIdentity: !Ref SourceEmail
+  EmailQueue: 
+    Type: AWS::SQS::Queue
+  EmailInvokeLambda: 
+    Type: AWS::Lambda::Permission
+    Properties: 
+      FunctionName: !Ref LambdaEmail
+      Action: 'lambda:InvokeFunction'
+      Principal: 'sqs.amazonaws.com'
+      SourceArn: !GetAtt EmailQueue.Arn
+  EmailEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt EmailQueue.Arn
+      FunctionName: !GetAtt LambdaEmail.Arn
+  EmailLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: ''
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+  LambdaSignalLambdaPolicy:
+    Type: AWS::IAM::Policy
+    Properties: 
+      Roles:
+        - '{{resolve:ssm:/heron/heron-signal-lambda-rolename}}'
+      PolicyName: 'lambdasignal-send-email'
+      PolicyDocument: 
+        Version: '2012-10-17'
+        Statement: 
+          - Effect: 'Allow'
+            Action: 
+              - 'sqs:SendMessage'
+            Resource: !GetAtt EmailQueue.Arn
+          - Effect: 'Allow'
+            Action: 
+              - 'ssm:GetParameter'
+            Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${EmailSQSParameter}'
+  EmailLambdaPolicy:
+    Type: AWS::IAM::Policy
+    Properties: 
+      PolicyName: 'lambdaemail'
+      PolicyDocument: 
+        Version: '2012-10-17'
+        Statement: 
+          - Effect: 'Allow'
+            Action: 
+              - 'sqs:ReceiveMessage'
+              - 'sqs:DeleteMessage'
+              - 'sqs:GetQueueAttributes'
+              - 'sqs:ChangeMessageVisibility'
+            Resource: !GetAtt EmailQueue.Arn
+          - Effect: 'Allow'
+            Action: 
+              - 'ssm:GetParameter'
+            Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/heron/heron-video-domain'
+      Roles: 
+        - !Ref EmailLambdaRole
+  LambdaEmail:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - EmailLambdaRole
+    Properties:
+      Role: !GetAtt EmailLambdaRole.Arn
+      Handler: index.lambda_handler
+      Runtime: python3.9
+      Timeout: 25
+      MemorySize: 128
+      Code:
+        ZipFile: |
+          import boto3
+          import os
+          import json
+
+          def lambda_handler(event, context):
+              payload = json.loads(event['Records'][0]['body'])
+              date = payload['date']
+              identityid = payload['identityID']
+              ses = os.environ['SES']
+              ssm = boto3.client('ssm')
+              video_domain_param = ssm.get_parameter(
+                Name = '/heron/heron-video-domain',
+                WithDecryption = False
+              )
+              video_domain = video_domain_param['Parameter']['Value']
+
+              print(payload)
+
+  EmailSQSParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/heron/signal-lambda/email'
+      Type: String
+      Value: !GetAtt EmailQueue.QueueName
