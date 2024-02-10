@@ -102,32 +102,22 @@ Resources:
                 WithDecryption = False
               )
               video_domain = video_domain_param['Parameter']['Value']
-
-              indextemplate = Template(''.join((
-                '<!DOCTYPE html><html lang="en">',
-                '<head><meta charset="utf-8">',
-                '<meta name="viewport" content="width=device-width, initial-scale=1">',
-                '<meta name="twitter:card" content="player" />',
-                '<meta name="twitter:site" content="@$twitter_handle" />',
-                '<meta name="twitter:title" content="Live Stream @$twitter_handle" />',
-                '<meta name="twitter:description" content="@$twitter_handle is livestreaming $cam camera." />',
-                '<meta name="twitter:image" content="https://$video_domain/live.png" />',
-                '<meta name="twitter:player" content="https://$video_domain/$identityid/$date/$cam-container.html" />',
-                '<meta name="twitter:player:width" content="480" />',
-                '<meta name="twitter:player:height" content="600" />',
-                '</head><body></body></html>')))
-
-              indexstring = indextemplate.substitute(
-                date = date,
-                identityid = identityid,
-                twitter_handle = twitter_handle,
-                cam = cam,
-                video_domain = video_domain
-              )
               camtemplate = Template(''.join((
-                  '<html><head><title>Live feed</title></head>',
+                  '<html><head><title>Live feed</title><meta charset="utf-8">',
+                  '<meta name="viewport" content="width=device-width, initial-scale=1">',
+                  '<meta name="twitter:card" content="player" />',
+                  '<meta name="twitter:site" content="@$video_domain" />',
+                  '<meta name="twitter:title" content="Live Stream @$twitter_handle" />',
+                  '<meta name="twitter:description" content="@$twitter_handle is livestreaming $cam camera." />',
+                  '<meta name="twitter:image" content="https://$video_domain/live.png" />',
+                  '<meta name="twitter:player" content="https://$video_domain/$identityid/$date/$cam-container.html" />',
+                  '<meta name="twitter:player:stream" content="https://$video_domain/$identityid/$date/$cam-out.m3u8">',
+                  '<meta name="twitter:player:stream:content_type" content="video/mp4">',
+                  '<meta name="twitter:player:width" content="480" />',
+                  '<meta name="twitter:player:height" content="600" />',
                   '<body><script src="https://${video_domain}/hls.js"></script>',
                   '<center><video height="600" id="video" controls></video></center>',
+                  '<head>',
                   '<script>',
                   '  url = "https://${video_domain}/${identityid}/${date}/${cam}-out.m3u8";',
                   '  var video = document.getElementById("video");',
@@ -151,6 +141,7 @@ Resources:
               camstring = camtemplate.substitute(
                 date = date,
                 identityid = identityid,
+                twitter_handle = twitter_handle,
                 cam = cam,
                 video_domain = video_domain
               )
@@ -159,17 +150,12 @@ Resources:
                 WithDecryption = False
               )
               video_bucket = video_bucket_param['Parameter']['Value']
-              s3 = boto3.resource('s3')
-              indexobject = s3.Object(
-                  bucket_name = video_bucket, 
-                  key = identityid + '/' + date '/' + 'twitterindex.html'
-              )
-              indexobject.put(Body=indexstring)
+              indexobject.put(Body=indexstring, ContentType='text/html')
               camobject = s3.Object(
                   bucket_name = video_bucket, 
-                  key = identityid + '/' + date '/' + cam + '-container.html'
+                  key = identityid + '/' + date + '/' + cam + '-cam.html'
               )
-              camobject.put(Body=camstring)
+              camobject.put(Body=camstring, ContentType='text/html')
 
 
   TwitterSQSParameter:

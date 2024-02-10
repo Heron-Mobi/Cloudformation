@@ -81,6 +81,9 @@ Resources:
       Runtime: python3.9
       Timeout: 25
       MemorySize: 128
+      Environment:
+        Variables:
+          SOURCEEMAIL: !Ref SourceEmail
       Code:
         ZipFile: |
           import boto3
@@ -91,7 +94,6 @@ Resources:
               payload = json.loads(event['Records'][0]['body'])
               date = payload['date']
               identityid = payload['identityID']
-              ses = os.environ['SES']
               ssm = boto3.client('ssm')
               video_domain_param = ssm.get_parameter(
                 Name = '/heron/heron-video-domain',
