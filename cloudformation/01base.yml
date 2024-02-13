@@ -102,6 +102,13 @@ Resources:
                   - '*'
           - Effect: 'Allow'
             Action: 
+              - 's3:ListBucket'
+            Resource: !GetAtt VideoBucket.Arn
+            Condition:
+              StringEquals:
+                s3:prefix: '${cognito-identity.amazonaws.com:sub}/'
+          - Effect: 'Allow'
+            Action: 
               - 's3:GetObject'
               - 's3:PutObject'
             Resource:
@@ -338,6 +345,18 @@ Resources:
           - '.' 
           - - 'auth'
             - !Ref DomainName
+  UserPoolIDParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/heron/user-pool-id'
+      Type: String
+      Value: !Ref UserPool 
+  IdentityPoolIDParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/heron/identity-pool-id'
+      Type: String
+      Value: !Ref IdentityPool 
 
 Outputs:
   Region:

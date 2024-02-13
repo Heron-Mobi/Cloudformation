@@ -25,8 +25,12 @@ createsignalemail:  ## builds signal email
 createsignaltwitter:  ## builds signal email
 	./scripts/deploy.sh heron-signal-twitter cloudformation/03signal-twitter.yml ${REGION}
 
+.PHONY: createapigateway
+createapigateway:  ## builds signal email
+	./scripts/deploy.sh heron-apigateway cloudformation/02apigateway.yml ${REGION}
+
 .PHONY: buildcore
-buildcore: | createbase createsignal ## wait builds core in order
+buildcore: | createbase createsignal createapigateway ## wait builds core in order
 
 .PHONY: buildsignalers
 buildsignalers: createsignalemail createsignaltwitter

@@ -1,0 +1,261 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: API Gateway for dashboard
+
+Resources:
+  HeronApi:
+    Type: 'AWS::ApiGateway::RestApi'
+    Properties:
+      Name: HeronAPI
+      DisableExecuteApiEndpoint: False
+  Authorizer:
+    Type: 'AWS::ApiGateway::Authorizer'
+    Properties:
+      IdentitySource: method.request.header.Authorization
+      Name: CognitoUser
+      ProviderARNs:
+        - !Join
+          - '/'
+          - - !Sub 'arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool'
+            - '{{resolve:ssm:/heron/user-pool-id}}'
+      RestApiId: !Ref HeronApi
+      Type: COGNITO_USER_POOLS
+  HeronModel:
+    Type: AWS::ApiGateway::Model
+    Properties:
+      ContentType: 'application/json'
+      RestApiId: !Ref HeronApi
+      Schema: {}
+
+  HeronStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      DeploymentId: !Ref HeronDeployment
+      Description: Lambda API Stage v0
+      RestApiId: !Ref HeronApi
+      StageName: 'v0'
+
+  HeronDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: VideoGetMethod
+    Properties:
+      Description: Lambda API Deployment
+      RestApiId: !Ref HeronApi
+
+  HeronApiIamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: ''
+            Effect: 'Allow'
+            Principal:
+              Service:
+                - 'apigateway.amazonaws.com'
+            Action:
+              - 'sts:AssumeRole'
+      Path: '/'
+      Policies:
+        - PolicyName: LambdaAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action: 'lambda:*'
+                Resource:
+                  - !GetAtt GetVideo.Arn
+                  - !GetAtt CORSOptions.Arn
+
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service:
+                - 'lambda.amazonaws.com'
+            Action:
+              - 'sts:AssumeRole'
+      Path: '/'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: LambdaAPIssmAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: 'Allow'
+              Action: 
+                - 'ssm:GetParameter'
+              Resource:
+                - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/heron/identity-pool-id'
+                - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/heron/user-pool-id'
+                - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/heron/video-bucket-name'
+  
+  CORSOptions:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: AWS Lambda function
+      FunctionName: 'CORS-Options'
+      Handler: index.handler
+      MemorySize: 256
+      Role: !GetAtt LambdaRole.Arn
+      Runtime: python3.7
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          def handler(event, context):
+            response = {
+              'isBase64Encoded': False,
+              'statusCode': 200,
+              'headers': {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET,PUT,POST,DELETE,PATCH,OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,AccessAuthorization,X-Api-Key,X-Amz-Security-Token',
+                'Access-Control-Allow-Credentials' : True,
+              }
+            }
+            return response
+
+###
+# Video Resource and Methods
+###
+  VideoResource:
+    Type: 'AWS::ApiGateway::Resource'
+    Properties:
+      ParentId: !GetAtt HeronApi.RootResourceId
+      RestApiId: !Ref HeronApi
+      PathPart: 'videos'
+  
+  VideoCORSMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      Integration:
+        ConnectionType: INTERNET
+        Credentials: !GetAtt HeronApiIamRole.Arn
+        IntegrationHttpMethod: POST
+        PassthroughBehavior: WHEN_NO_MATCH
+        TimeoutInMillis: 29000
+        Type: AWS_PROXY
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CORSOptions.Arn}/invocations'
+      OperationName: 'CORS Options'
+      ResourceId: !Ref VideoResource
+      RestApiId: !Ref HeronApi
+
+  VideoGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: GET
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref Authorizer
+      Integration:
+        ConnectionType: INTERNET
+        Credentials: !GetAtt HeronApiIamRole.Arn
+        IntegrationHttpMethod: POST
+        PassthroughBehavior: WHEN_NO_MATCH
+        TimeoutInMillis: 29000
+        Type: AWS_PROXY
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetVideo.Arn}/invocations'
+      OperationName: 'lambda'
+      ResourceId: !Ref VideoResource
+      RestApiId: !Ref HeronApi
+
+
+  GetVideo:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: AWS Lambda function
+      FunctionName: 'GetVideosFunction'
+      Handler: index.handler
+      MemorySize: 256
+      Role: !GetAtt LambdaRole.Arn
+      Runtime: python3.7
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          from datetime import datetime
+
+          def folders(client, bucket, prefix=''):
+            paginator = client.get_paginator('list_objects')
+            for result in paginator.paginate(Bucket=bucket, Prefix=prefix, Delimiter='/'):
+              for prefix in result.get('CommonPrefixes', []):
+                yield prefix.get('Prefix')
+          def handler(event, context):
+            print(json.dumps(event))
+            ssm = boto3.client('ssm')
+            identity_pool_param = ssm.get_parameter(
+              Name = '/heron/identity-pool-id',
+              WithDecryption = False
+            )
+            user_pool_param = ssm.get_parameter(
+              Name = '/heron/user-pool-id',
+              WithDecryption = False
+            )
+            video_bucket_param = ssm.get_parameter(
+              Name = '/heron/video-bucket-name',
+              WithDecryption = False
+            )
+            region = os.environ['AWS_REGION']
+            logins = {
+              'cognito-idp.eu-central-1.amazonaws.com/' + user_pool_param['Parameter']['Value']: event['headers']['Authorization']
+            }
+            client = boto3.client('cognito-identity')
+            identityId = client.get_id(
+              AccountId = event['requestContext']['accountId'],
+              IdentityPoolId = identity_pool_param['Parameter']['Value'],
+              Logins = logins
+            )
+            print(identityId)
+            creds = client.get_credentials_for_identity(
+              IdentityId = identityId['IdentityId'],
+              Logins = logins
+            )
+            userclient = boto3.client(
+              's3',
+              aws_access_key_id = creds['Credentials']['AccessKeyId'],
+              aws_secret_access_key = creds['Credentials']['SecretKey'],
+              aws_session_token = creds['Credentials']['SessionToken']
+            )
+            gen_subfolders = folders(
+              userclient,
+              video_bucket_param['Parameter']['Value'],
+              prefix=identityId['IdentityId'] + '/'
+            )
+            videofolders = []
+            for folder in gen_subfolders:
+              f = folder.split("/")
+              out = datetime.strptime(f[1], '%d%m%Y%H%M%S')
+              videofolders.append(
+                {
+                  'id': f[1],
+                  'date': out.isoformat()
+                }
+              )
+
+            response = {
+              'isBase64Encoded': False,
+              'statusCode': 200,
+              'headers': {
+                'Access-Control-Allow-Origin': '*',
+                'Content-Type': 'application/json',
+              },
+              'multiValueHeaders': {},
+              'body': json.dumps({
+                'videos': videofolders,
+                'id': identityId,
+              })
+            }
+            return response   
+
