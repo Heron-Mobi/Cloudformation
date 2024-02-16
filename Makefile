@@ -8,10 +8,22 @@ help:
 	@echo 'targets:'
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
+
+.PHONY: buildlambda
+buildlambda: ## Creates the lambda functions
+
+.PHONY: clean
+clean:
+	rm -rf build lambda.zip lambda.zip.base64sha256
+
+
+.PHONY: createbase
+createbootstrap:  ## builds base
+	./scripts/deploy.sh heron-bootstrap cloudformation/00bootstrap.yml ${REGION}
+
 .PHONY: createbase
 createbase:  ## builds base
 	./scripts/deploy.sh heron-base cloudformation/01base.yml ${REGION} parameters/base.json
-
 
 .PHONY: createsignal
 createsignal:  ## builds signal sqs
@@ -22,11 +34,11 @@ createsignalemail:  ## builds signal email
 	./scripts/deploy.sh heron-signal-email cloudformation/03signal-email.yml ${REGION} parameters/03email.json
 
 .PHONY: createsignaltwitter
-createsignaltwitter:  ## builds signal email
+createsignaltwitter:  ## builds signal twitter
 	./scripts/deploy.sh heron-signal-twitter cloudformation/03signal-twitter.yml ${REGION}
 
 .PHONY: createapigateway
-createapigateway:  ## builds signal email
+createapigateway:  ## builds apigateway
 	./scripts/deploy.sh heron-apigateway cloudformation/02apigateway.yml ${REGION}
 
 .PHONY: buildcore

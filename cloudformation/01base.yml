@@ -94,6 +94,7 @@ Resources:
             Action: 
               - 's3:PutObject'
               - 's3:GetObject'
+              - 's3:DeleteObject'
             Resource:
               !Join
                 - '/'
@@ -105,8 +106,10 @@ Resources:
               - 's3:ListBucket'
             Resource: !GetAtt VideoBucket.Arn
             Condition:
-              StringEquals:
-                s3:prefix: '${cognito-identity.amazonaws.com:sub}/'
+              StringLike:
+                s3:prefix:
+                  - '${cognito-identity.amazonaws.com:sub}/*'
+                  - '${cognito-identity.amazonaws.com:sub}/'
           - Effect: 'Allow'
             Action: 
               - 's3:GetObject'

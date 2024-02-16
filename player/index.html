@@ -1,0 +1,56 @@
+<html>
+  <head>
+    <title>Live feed</title>
+  </head>
+
+  <body>
+    <script src="/hls.js"></script>
+
+    <center>
+      <h1>Live Feed</h1>
+      <b>Front | Back</b></br>
+      <video height="600" id="videofront" controls></video>
+      <video height="600" id="videoback" controls></video>
+    </center>
+
+    <script>
+      const urlParams = new URLSearchParams(window.location.search);
+      const identyId = urlParams.get('identityId');
+      const timestamp = urlParams.get('timestamp');
+      const fronturl = '/' + identyId + '/' + timestamp+ '/front-out.m3u8'
+      const backurl = '/' + identyId + '/' + timestamp+ '/back-out.m3u8'
+
+      var videofront = document.getElementById('videofront');
+      var videoback = document.getElementById('videoback');
+      if (Hls.isSupported()) {
+	// Front Video
+        var hlsfront = new Hls({
+          debug: true,
+        });
+	hlsfront.loadSource(fronturl);
+        hlsfront.attachMedia(videofront);
+        hlsfront.on(Hls.Events.MEDIA_ATTACHED, function () {
+          videofront.play();
+        });
+	// Back Video
+        var hlsback = new Hls({
+          debug: true,
+        });
+        hlsback.loadSource(backurl);
+        hlsback.attachMedia(videoback);
+        hlsback.on(Hls.Events.MEDIA_ATTACHED, function () {
+          videoback.play();
+        });
+      }
+      else if (videofront.canPlayType('application/vnd.apple.mpegurl')) {
+        videofront.src = fronturl;
+        videofront.addEventListener('canplay', function () {
+          videofront.play();
+        });
+        videoback.src = backurl;
+        videoback.addEventListener('canplay', function () {
+          videoback.play();
+        });
+      }
+    </script>
+</html>
