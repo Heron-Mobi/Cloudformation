@@ -1,5 +1,6 @@
 import json
 import boto3
+import botocore
 import os
 
 
@@ -44,9 +45,15 @@ def handler(event, context):
         aws_session_token=creds["Credentials"]["SessionToken"],
     )
     s3 = session.resource("s3")
-    configobject = s3.Object(
-        config_bucket_param["Parameter"]["Value"],
-        identityId["IdentityId"] + "/config.json",
-    )
-    response["body"] = configobject.get()["Body"].read().decode("utf-8")
+    try:
+        configobject = s3.Object(
+            config_bucket_param["Parameter"]["Value"],
+            identityId["IdentityId"] + "/config.json",
+        )
+        response["body"] = configobject.get()["Body"].read().decode("utf-8")
+    except botocore.exceptions.ClientError as e:
+        if e.response['Error']['Code'] == "AccessDenied":
+            response["body"] = json.dumps({'signals':[]})
+        else:
+            raise
     return response
