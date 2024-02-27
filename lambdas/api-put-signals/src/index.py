@@ -1,6 +1,5 @@
-import json
 import boto3
-import os
+import usersession.usersession as usersession
 
 
 def handler(event, context):
@@ -15,34 +14,13 @@ def handler(event, context):
         "body": "",
     }
     ssm = boto3.client("ssm")
-    identity_pool_param = ssm.get_parameter(
-        Name="/heron/identity-pool-id", WithDecryption=False
-    )
-    user_pool_param = ssm.get_parameter(
-        Name="/heron/user-pool-id", WithDecryption=False
-    )
     config_bucket_param = ssm.get_parameter(
         Name="/heron/config-bucket-name", WithDecryption=False
     )
-    region = os.environ["AWS_REGION"]
-    logins = {
-        "cognito-idp.eu-central-1.amazonaws.com/"
-        + user_pool_param["Parameter"]["Value"]: event["headers"]["Authorization"]
-    }
-    client = boto3.client("cognito-identity")
-    identityId = client.get_id(
-        AccountId=event["requestContext"]["accountId"],
-        IdentityPoolId=identity_pool_param["Parameter"]["Value"],
-        Logins=logins,
-    )
-    creds = client.get_credentials_for_identity(
-        IdentityId=identityId["IdentityId"], Logins=logins
-    )
-    session = boto3.Session(
-        aws_access_key_id=creds["Credentials"]["AccessKeyId"],
-        aws_secret_access_key=creds["Credentials"]["SecretKey"],
-        aws_session_token=creds["Credentials"]["SessionToken"],
-    )
+    identityId, session = usersession.get_user_id_and_session(
+            event["headers"]["Authorization"],
+            event["requestContext"]["accountId"]
+            )
     s3 = session.resource("s3")
     configobject = s3.Object(
         config_bucket_param["Parameter"]["Value"],

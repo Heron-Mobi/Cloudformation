@@ -12,6 +12,12 @@ Resources:
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+  DeployBucketParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/heron/deploy-resource-bucket-name'
+      Type: String
+      Value: !Ref DeploymentResourceBucket
 Outputs:
   DeploymentResourceBucket:
     Value: !Ref DeploymentResourceBucket

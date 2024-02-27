@@ -1,0 +1,133 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  CertARN:
+    Type: String
+  DomainName:
+    Type: String
+  HostedZone:
+    Type: String
+Resources:
+  DashboardBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      PolicyDocument:
+        Id: !Ref DashboardBucket
+        Version: '2012-10-17'
+        Statement:
+          - Sid: CloudfrontGet
+            Action: s3:GetObject
+            Effect: Allow
+            Principal:
+              AWS:
+                !Join
+                  - ""
+                  - - "arn:"
+                    - !Ref AWS::Partition
+                    - ":iam::cloudfront:user/CloudFront Origin Access Identity "
+                    - !Ref OriginAccessIdentity
+            Resource:
+              !Join
+                - ""
+                - - !GetAtt DashboardBucket.Arn
+                  - /*
+          - Sid: AllowSSLRequestsOnly
+            Action: s3:*
+            Effect: Deny
+            Resource:
+              - !Sub "arn:aws:s3:::${DashboardBucket}"
+              - !Sub "arn:aws:s3:::${DashboardBucket}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+            Principal: "*"
+      Bucket: !Ref DashboardBucket      
+  OriginAccessIdentity:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: HeronDashboard
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Aliases:
+        - !Join
+            - '.' 
+            - - 'dashboard'
+              - !Ref DomainName
+        ViewerCertificate:
+          AcmCertificateArn: !Ref CertARN
+          SslSupportMethod: sni-only
+        Comment: Dashboard
+        CustomErrorResponses:
+          - ErrorCachingMinTTL: 0
+            ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCachingMinTTL: 0
+            ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+        DefaultRootObject: index.html
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - GET
+            - HEAD
+          CachedMethods:
+            - GET
+            - HEAD
+          Compress: true
+          DefaultTTL: 60
+          ForwardedValues:
+            Headers: []
+            QueryString: true
+          TargetOriginId: dashboardsite
+          ViewerProtocolPolicy: redirect-to-https
+        Enabled: true
+        HttpVersion: http2
+        IPV6Enabled: true
+        Origins:
+          - Id: dashboardsite
+            DomainName: !Sub ${DashboardBucket}.s3.${AWS::Region}.amazonaws.com
+            S3OriginConfig:
+              OriginAccessIdentity: !Sub origin-access-identity/cloudfront/${OriginAccessIdentity.Id}
+        PriceClass: PriceClass_100
+  DNSRecordSets:
+    Type: 'AWS::Route53::RecordSetGroup'
+    Properties:
+      HostedZoneId: !Ref HostedZone
+      RecordSets:
+        - Name: 
+            !Join
+              - '.' 
+              - - 'dashboard'
+                - !Ref DomainName
+          Type: A
+          AliasTarget:
+            HostedZoneId: Z2FDTNDATAQYW2
+            DNSName: !GetAtt Distribution.DomainName
+  DashboardDomain:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/heron/heron-dashboard-domain'
+      Type: String
+      Value: 
+        !Join
+          - '.' 
+          - - 'dashboard'
+            - !Ref DomainName
+Outputs:
+  VideoBucket:
+    Value: !Ref DashboardBucket

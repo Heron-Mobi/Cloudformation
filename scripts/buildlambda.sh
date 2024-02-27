@@ -12,13 +12,15 @@ do
 	cd ${dir}
 	if [ -d build ]; then rm -rf build; fi
 	mkdir build
-	cp src/* build/.
+	cp -rf src/* build/.
 	cd build && \
 	pip install -r requirements.txt -t . && \
 	name=$(basename ${dir})
-	mkdir -p ${destination}/${name}
-	zip -qr9 ${destination}/${name}/${currenttime}.zip *
-	cd ../..
+	mkdir -p ${destination}/${name}/${currenttime}
+	zip -qr9 ${destination}/${name}/${currenttime}/index.zip *
+	cd ..
+	rm -rf build
+	cd ..
 done
 echo ${destination}
 bucket=$(aws cloudformation describe-stacks --region eu-central-1 \

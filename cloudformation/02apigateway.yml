@@ -1,11 +1,47 @@
 AWSTemplateFormatVersion: 2010-09-09
 Description: API Gateway for dashboard
+Parameters:
+  CertARN:
+    Type: String
+  DomainName:
+    Type: String
+  HostedZone:
+    Type: String
 Resources:
   HeronApi:
     Type: 'AWS::ApiGateway::RestApi'
     Properties:
       Name: HeronAPI
       DisableExecuteApiEndpoint: False
+  ApiDomainName:
+    Type: 'AWS::ApiGateway::DomainName'
+    Properties:
+      CertificateArn: !Ref CertARN
+      DomainName:
+        !Join
+          - '.' 
+          - - 'api'
+            - !Ref DomainName
+  ApiMapping:
+    Type: 'AWS::ApiGateway::BasePathMapping'
+    Properties:
+      DomainName: !Ref ApiDomainName
+      RestApiId: !Ref HeronApi
+  DNSRecordSets:
+    Type: 'AWS::Route53::RecordSetGroup'
+    Properties:
+      HostedZoneId: !Ref HostedZone
+      RecordSets:
+        - Name: 
+            !Join
+              - '.' 
+              - - 'api'
+                - !Ref DomainName
+          Type: A
+          AliasTarget:
+            HostedZoneId: Z2FDTNDATAQYW2
+            DNSName: !GetAtt ApiDomainName.DistributionDomainName
+
   Authorizer:
     Type: 'AWS::ApiGateway::Authorizer'
     Properties:
@@ -67,6 +103,8 @@ Resources:
                   - !GetAtt CORSOptions.Arn
                   - !GetAtt GetSignals.Arn
                   - !GetAtt PutSignals.Arn
+                  - !GetAtt GetTwitterLink.Arn
+                  - !GetAtt SetTwitterToken.Arn
 
   LambdaRole:
     Type: AWS::IAM::Role
@@ -97,7 +135,7 @@ Resources:
                 - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/heron/video-bucket-name'
                 - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/heron/config-bucket-name'
   
-  LambdaRole:
+  TwitterLambdaRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
@@ -113,7 +151,7 @@ Resources:
       ManagedPolicyArns:
         - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
       Policies:
-        - PolicyName: LambdaAPIssmAccess
+        - PolicyName: TwitterLambdaSSmandSecrets
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
@@ -124,11 +162,12 @@ Resources:
                 - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/heron/identity-pool-id'
                 - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/heron/user-pool-id'
                 - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/heron/config-bucket-name'
+                - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/heron/heron-dashboard-domain'
             - Effect: 'Allow'
               Action: 
-                - 'ssm:GetSecretValue'
+                - 'secretsmanager:GetSecretValue'
               Resource:
-                - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:heron/integrations/twitter'
+                - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:heron/integrations/twitter-??????'
 
   CORSOptions:
     Type: AWS::Lambda::Function
@@ -138,25 +177,33 @@ Resources:
       Handler: index.handler
       MemorySize: 256
       Role: !GetAtt LambdaRole.Arn
-      Runtime: python3.9
+      Runtime: python3.10
       Timeout: 60
       Code:
-        ZipFile: |
-          import json
-          import boto3
-          def handler(event, context):
-            response = {
-              'isBase64Encoded': False,
-              'statusCode': 200,
-              'headers': {
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'GET,PUT,POST,DELETE,PATCH,OPTIONS',
-                'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,AccessAuthorization,X-Api-Key,X-Amz-Security-Token',
-                'Access-Control-Allow-Credentials' : True,
-              }
-            }
-            return response
-
+        S3Bucket: '{{resolve:ssm:/heron/deploy-resource-bucket-name}}'
+        S3Key: 
+          !Join
+            - '/'
+            - - 'lambdas'
+              - 'api-cors-origin'
+              - '{{resolve:ssm:/heron/latest/lambda-build}}'
+              - 'index.zip'
+  UserSessionLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: UserSession
+      Description: My Lambda Layer
+      Content:
+        S3Bucket: '{{resolve:ssm:/heron/deploy-resource-bucket-name}}'
+        S3Key: 
+          !Join
+            - '/'
+            - - 'lambdas'
+              - 'layer-user-session'
+              - '{{resolve:ssm:/heron/latest/lambda-build}}'
+              - 'index.zip'
+      CompatibleRuntimes:
+        - python3.10
 ###
 # Video Resource and Methods
 ###
@@ -233,87 +280,19 @@ Resources:
       Handler: index.handler
       MemorySize: 256
       Role: !GetAtt LambdaRole.Arn
-      Runtime: python3.7
+      Runtime: python3.10
       Timeout: 60
       Code:
-        ZipFile: |
-          import json
-          import boto3
-          import os
-          from datetime import datetime
-          def folders(client, bucket, prefix=''):
-            paginator = client.get_paginator('list_objects')
-            for result in paginator.paginate(Bucket=bucket, Prefix=prefix, Delimiter='/'):
-              for prefix in result.get('CommonPrefixes', []):
-                yield prefix.get('Prefix')
-
-          def handler(event, context):
-            print(json.dumps(event))
-            ssm = boto3.client('ssm')
-            identity_pool_param = ssm.get_parameter(
-              Name = '/heron/identity-pool-id',
-              WithDecryption = False
-            )
-            user_pool_param = ssm.get_parameter(
-              Name = '/heron/user-pool-id',
-              WithDecryption = False
-            )
-            video_bucket_param = ssm.get_parameter(
-              Name = '/heron/video-bucket-name',
-              WithDecryption = False
-            )
-            region = os.environ['AWS_REGION']
-            logins = {
-              'cognito-idp.eu-central-1.amazonaws.com/' + user_pool_param['Parameter']['Value']: event['headers']['Authorization']
-            }
-            client = boto3.client('cognito-identity')
-            identityId = client.get_id(
-              AccountId = event['requestContext']['accountId'],
-              IdentityPoolId = identity_pool_param['Parameter']['Value'],
-              Logins = logins
-            )
-            print(identityId)
-            creds = client.get_credentials_for_identity(
-              IdentityId = identityId['IdentityId'],
-              Logins = logins
-            )
-            userclient = boto3.client(
-              's3',
-              aws_access_key_id = creds['Credentials']['AccessKeyId'],
-              aws_secret_access_key = creds['Credentials']['SecretKey'],
-              aws_session_token = creds['Credentials']['SessionToken']
-            )
-            gen_subfolders = folders(
-              userclient,
-              video_bucket_param['Parameter']['Value'],
-              prefix=identityId['IdentityId'] + '/'
-            )
-            videofolders = []
-            for folder in gen_subfolders:
-              f = folder.split("/")
-              out = datetime.strptime(f[1], '%d%m%Y%H%M%S')
-              videofolders.append(
-                {
-                  'id': f[1],
-                  'date': out.isoformat()
-                }
-              )
-
-            response = {
-              'isBase64Encoded': False,
-              'statusCode': 200,
-              'headers': {
-                'Access-Control-Allow-Origin': '*',
-                'Content-Type': 'application/json',
-              },
-              'multiValueHeaders': {},
-              'body': json.dumps({
-                'videos': videofolders,
-                'id': identityId,
-              })
-            }
-            return response   
-
+        S3Bucket: '{{resolve:ssm:/heron/deploy-resource-bucket-name}}'
+        S3Key: 
+          !Join
+            - '/'
+            - - 'lambdas'
+              - 'api-get-videos'
+              - '{{resolve:ssm:/heron/latest/lambda-build}}'
+              - 'index.zip'
+      Layers:
+        - !Ref UserSessionLayer
   DeleteVideo:
     Type: AWS::Lambda::Function
     Properties:
@@ -322,78 +301,19 @@ Resources:
       Handler: index.handler
       MemorySize: 256
       Role: !GetAtt LambdaRole.Arn
-      Runtime: python3.7
+      Runtime: python3.10
       Timeout: 60
       Code:
-        ZipFile: |
-          import json
-          import boto3
-          import os
-          def handler(event, context):
-            status = {
-              'status': 'deleted'
-            }
-            response = {
-              'isBase64Encoded': False,
-              'statusCode': 200,
-              'headers': {
-                'Access-Control-Allow-Origin': '*',
-                'Content-Type': 'application/json',
-              },
-              'multiValueHeaders': {},
-            }
-
-            try:
-              if (event['queryStringParameters']) and (
-                event['queryStringParameters']['id']) and ( 
-                event['queryStringParameters']['id'] is not None):
-                dateid = event['queryStringParameters']['id']
-            except KeyError:
-              print('empty date, doing nothing')
-              status['status'] = 'failed'
-              response['body'] = json.dumps(status)
-              return response  
-              
-            ssm = boto3.client('ssm')
-            identity_pool_param = ssm.get_parameter(
-              Name = '/heron/identity-pool-id',
-              WithDecryption = False
-            )
-            user_pool_param = ssm.get_parameter(
-              Name = '/heron/user-pool-id',
-              WithDecryption = False
-            )
-            video_bucket_param = ssm.get_parameter(
-              Name = '/heron/video-bucket-name',
-              WithDecryption = False
-            )
-            region = os.environ['AWS_REGION']
-            logins = {
-              'cognito-idp.eu-central-1.amazonaws.com/' + user_pool_param['Parameter']['Value']: event['headers']['Authorization']
-            }
-            client = boto3.client('cognito-identity')
-            identityId = client.get_id(
-              AccountId = event['requestContext']['accountId'],
-              IdentityPoolId = identity_pool_param['Parameter']['Value'],
-              Logins = logins
-            )
-            creds = client.get_credentials_for_identity(
-              IdentityId = identityId['IdentityId'],
-              Logins = logins
-            )
-            session = boto3.Session(
-              aws_access_key_id = creds['Credentials']['AccessKeyId'],
-              aws_secret_access_key = creds['Credentials']['SecretKey'],
-              aws_session_token = creds['Credentials']['SessionToken']
-            )
-            s3 = session.resource('s3')
-            bucket = s3.Bucket(video_bucket_param['Parameter']['Value'])
-            try:
-              bucket.objects.filter(Prefix=identityId['IdentityId'] + '/' + dateid ).delete()
-            except:
-              status['status'] = 'failed'
-            response['body'] = json.dumps(status)
-            return response
+        S3Bucket: '{{resolve:ssm:/heron/deploy-resource-bucket-name}}'
+        S3Key: 
+          !Join
+            - '/'
+            - - 'lambdas'
+              - 'api-delete-video'
+              - '{{resolve:ssm:/heron/latest/lambda-build}}'
+              - 'index.zip'
+      Layers:
+        - !Ref UserSessionLayer
 
 ###
 # Video Resource and Methods
@@ -471,60 +391,19 @@ Resources:
       Handler: index.handler
       MemorySize: 256
       Role: !GetAtt LambdaRole.Arn
-      Runtime: python3.7
+      Runtime: python3.10
       Timeout: 60
       Code:
-        ZipFile: |
-          import json
-          import boto3
-          import os
-          def handler(event, context):
-            response = {
-              'isBase64Encoded': False,
-              'statusCode': 200,
-              'headers': {
-                'Access-Control-Allow-Origin': '*',
-                'Content-Type': 'application/json',
-              },
-              'multiValueHeaders': {},
-              'body':"",
-            }
-            ssm = boto3.client('ssm')
-            identity_pool_param = ssm.get_parameter(
-              Name = '/heron/identity-pool-id',
-              WithDecryption = False
-            )
-            user_pool_param = ssm.get_parameter(
-              Name = '/heron/user-pool-id',
-              WithDecryption = False
-            )
-            config_bucket_param = ssm.get_parameter(
-              Name = '/heron/config-bucket-name',
-              WithDecryption = False
-            )
-            region = os.environ['AWS_REGION']
-            logins = {
-              'cognito-idp.eu-central-1.amazonaws.com/' + user_pool_param['Parameter']['Value']: event['headers']['Authorization']
-            }
-            client = boto3.client('cognito-identity')
-            identityId = client.get_id(
-              AccountId = event['requestContext']['accountId'],
-              IdentityPoolId = identity_pool_param['Parameter']['Value'],
-              Logins = logins
-            )
-            creds = client.get_credentials_for_identity(
-              IdentityId = identityId['IdentityId'],
-              Logins = logins
-            )
-            session = boto3.Session(
-              aws_access_key_id = creds['Credentials']['AccessKeyId'],
-              aws_secret_access_key = creds['Credentials']['SecretKey'],
-              aws_session_token = creds['Credentials']['SessionToken']
-            )
-            s3 = session.resource('s3')
-            configobject = s3.Object(config_bucket_param['Parameter']['Value'], identityId['IdentityId'] + '/config.json')
-            response['body'] = configobject.get()['Body'].read().decode('utf-8')
-            return response
+        S3Bucket: '{{resolve:ssm:/heron/deploy-resource-bucket-name}}'
+        S3Key: 
+          !Join
+            - '/'
+            - - 'lambdas'
+              - 'api-get-signals'
+              - '{{resolve:ssm:/heron/latest/lambda-build}}'
+              - 'index.zip'
+      Layers:
+        - !Ref UserSessionLayer
 
 
   PutSignals:
@@ -535,60 +414,19 @@ Resources:
       Handler: index.handler
       MemorySize: 256
       Role: !GetAtt LambdaRole.Arn
-      Runtime: python3.9
+      Runtime: python3.10
       Timeout: 60
       Code:
-        ZipFile: |
-          import json
-          import boto3
-          import os
-          def handler(event, context):
-            response = {
-              'isBase64Encoded': False,
-              'statusCode': 200,
-              'headers': {
-                'Access-Control-Allow-Origin': '*',
-                'Content-Type': 'application/json',
-              },
-              'multiValueHeaders': {},
-              'body':"",
-            }
-            ssm = boto3.client('ssm')
-            identity_pool_param = ssm.get_parameter(
-              Name = '/heron/identity-pool-id',
-              WithDecryption = False
-            )
-            user_pool_param = ssm.get_parameter(
-              Name = '/heron/user-pool-id',
-              WithDecryption = False
-            )
-            config_bucket_param = ssm.get_parameter(
-              Name = '/heron/config-bucket-name',
-              WithDecryption = False
-            )
-            region = os.environ['AWS_REGION']
-            logins = {
-              'cognito-idp.eu-central-1.amazonaws.com/' + user_pool_param['Parameter']['Value']: event['headers']['Authorization']
-            }
-            client = boto3.client('cognito-identity')
-            identityId = client.get_id(
-              AccountId = event['requestContext']['accountId'],
-              IdentityPoolId = identity_pool_param['Parameter']['Value'],
-              Logins = logins
-            )
-            creds = client.get_credentials_for_identity(
-              IdentityId = identityId['IdentityId'],
-              Logins = logins
-            )
-            session = boto3.Session(
-              aws_access_key_id = creds['Credentials']['AccessKeyId'],
-              aws_secret_access_key = creds['Credentials']['SecretKey'],
-              aws_session_token = creds['Credentials']['SessionToken']
-            )
-            s3 = session.resource('s3')
-            configobject = s3.Object(config_bucket_param['Parameter']['Value'], identityId['IdentityId'] + '/config.json')
-            configobject.put(Body=event['body'])
-            return response
+        S3Bucket: '{{resolve:ssm:/heron/deploy-resource-bucket-name}}'
+        S3Key: 
+          !Join
+            - '/'
+            - - 'lambdas'
+              - 'api-put-signals'
+              - '{{resolve:ssm:/heron/latest/lambda-build}}'
+              - 'index.zip'
+      Layers:
+        - !Ref UserSessionLayer
 
 
 ###
@@ -601,6 +439,24 @@ Resources:
       RestApiId: !Ref HeronApi
       PathPart: 'integrations'
   
+  IntegrationsCORSMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      Integration:
+        ConnectionType: INTERNET
+        Credentials: !GetAtt HeronApiIamRole.Arn
+        IntegrationHttpMethod: POST
+        PassthroughBehavior: WHEN_NO_MATCH
+        TimeoutInMillis: 29000
+        Type: AWS_PROXY
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CORSOptions.Arn}/invocations'
+      OperationName: 'CORS Options'
+      ResourceId: !Ref IntegrationResource
+      RestApiId: !Ref HeronApi
+
   IntegrationTwitterResource:
     Type: 'AWS::ApiGateway::Resource'
     Properties:
@@ -646,6 +502,41 @@ Resources:
       ResourceId: !Ref IntegrationTwitterResource
       RestApiId: !Ref HeronApi
 
+  TwitterSetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: POST
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref Authorizer
+      Integration:
+        ConnectionType: INTERNET
+        Credentials: !GetAtt HeronApiIamRole.Arn
+        IntegrationHttpMethod: POST
+        PassthroughBehavior: WHEN_NO_MATCH
+        TimeoutInMillis: 29000
+        Type: AWS_PROXY
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${SetTwitterToken.Arn}/invocations'
+      OperationName: 'lambda'
+      ResourceId: !Ref IntegrationTwitterResource
+      RestApiId: !Ref HeronApi
+  TweepyLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: TweepyOverrides
+      Description: My Lambda Layer
+      Content:
+        S3Bucket: '{{resolve:ssm:/heron/deploy-resource-bucket-name}}'
+        S3Key: 
+          !Join
+            - '/'
+            - - 'lambdas'
+              - 'layer-twitter'
+              - '{{resolve:ssm:/heron/latest/lambda-build}}'
+              - 'index.zip'
+      CompatibleRuntimes:
+        - python3.10
   GetTwitterLink:
     Type: AWS::Lambda::Function
     Properties:
@@ -654,58 +545,56 @@ Resources:
       Handler: index.handler
       MemorySize: 256
       Role: !GetAtt TwitterLambdaRole.Arn
-      Runtime: python3.7
+      Runtime: python3.10
       Timeout: 60
       Code:
-        ZipFile: |
-          import json
-          import boto3
-          import os
-          def handler(event, context):
-            response = {
-              'isBase64Encoded': False,
-              'statusCode': 200,
-              'headers': {
-                'Access-Control-Allow-Origin': '*',
-                'Content-Type': 'application/json',
-              },
-              'multiValueHeaders': {},
-              'body':"",
-            }
-            ssm = boto3.client('ssm')
-            identity_pool_param = ssm.get_parameter(
-              Name = '/heron/identity-pool-id',
-              WithDecryption = False
-            )
-            user_pool_param = ssm.get_parameter(
-              Name = '/heron/user-pool-id',
-              WithDecryption = False
-            )
-            config_bucket_param = ssm.get_parameter(
-              Name = '/heron/config-bucket-name',
-              WithDecryption = False
-            )
-            region = os.environ['AWS_REGION']
-            logins = {
-              'cognito-idp.eu-central-1.amazonaws.com/' + user_pool_param['Parameter']['Value']: event['headers']['Authorization']
-            }
-            client = boto3.client('cognito-identity')
-            identityId = client.get_id(
-              AccountId = event['requestContext']['accountId'],
-              IdentityPoolId = identity_pool_param['Parameter']['Value'],
-              Logins = logins
-            )
-            creds = client.get_credentials_for_identity(
-              IdentityId = identityId['IdentityId'],
-              Logins = logins
-            )
-            session = boto3.Session(
-              aws_access_key_id = creds['Credentials']['AccessKeyId'],
-              aws_secret_access_key = creds['Credentials']['SecretKey'],
-              aws_session_token = creds['Credentials']['SessionToken']
-            )
-            s3 = session.resource('s3')
-            configobject = s3.Object(config_bucket_param['Parameter']['Value'], identityId['IdentityId'] + '/config.json')
-            response['body'] = configobject.get()['Body'].read().decode('utf-8')
-            return response
-
+        S3Bucket: '{{resolve:ssm:/heron/deploy-resource-bucket-name}}'
+        S3Key: 
+          !Join
+            - '/'
+            - - 'lambdas'
+              - 'api-get-twitter-link'
+              - '{{resolve:ssm:/heron/latest/lambda-build}}'
+              - 'index.zip'
+      Layers:
+        - !Ref TweepyLayer
+        - !Ref UserSessionLayer
+  SetTwitterToken:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Set Twitter Token For Auth
+      FunctionName: 'SetTwitterTokenFunction'
+      Handler: index.handler
+      MemorySize: 256
+      Role: !GetAtt TwitterLambdaRole.Arn
+      Runtime: python3.10
+      Timeout: 60
+      Code:
+        S3Bucket: '{{resolve:ssm:/heron/deploy-resource-bucket-name}}'
+        S3Key: 
+          !Join
+            - '/'
+            - - 'lambdas'
+              - 'api-set-twitter-token'
+              - '{{resolve:ssm:/heron/latest/lambda-build}}'
+              - 'index.zip'
+      Layers:
+        - !Ref TweepyLayer
+        - !Ref UserSessionLayer
+  
+  ApiGatewayParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/heron/apigateway-id'
+      Type: String
+      Value: !Ref HeronApi
+  ApiDomain:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/heron/heron-api-domain'
+      Type: String
+      Value: 
+        !Join
+          - '.' 
+          - - 'api'
+            - !Ref DomainName

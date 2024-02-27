@@ -1,7 +1,7 @@
 import json
 import boto3
-import os
 from datetime import datetime
+import usersession.usersession as usersession
 
 
 def folders(client, bucket, prefix=""):
@@ -14,38 +14,16 @@ def folders(client, bucket, prefix=""):
 def handler(event, context):
     print(json.dumps(event))
     ssm = boto3.client("ssm")
-    identity_pool_param = ssm.get_parameter(
-        Name="/heron/identity-pool-id", WithDecryption=False
-    )
-    user_pool_param = ssm.get_parameter(
-        Name="/heron/user-pool-id", WithDecryption=False
-    )
     video_bucket_param = ssm.get_parameter(
         Name="/heron/video-bucket-name", WithDecryption=False
     )
-    region = os.environ["AWS_REGION"]
-    logins = {
-        "cognito-idp.eu-central-1.amazonaws.com/"
-        + user_pool_param["Parameter"]["Value"]: event["headers"]["Authorization"]
-    }
-    client = boto3.client("cognito-identity")
-    identityId = client.get_id(
-        AccountId=event["requestContext"]["accountId"],
-        IdentityPoolId=identity_pool_param["Parameter"]["Value"],
-        Logins=logins,
-    )
-    print(identityId)
-    creds = client.get_credentials_for_identity(
-        IdentityId=identityId["IdentityId"], Logins=logins
-    )
-    userclient = boto3.client(
-        "s3",
-        aws_access_key_id=creds["Credentials"]["AccessKeyId"],
-        aws_secret_access_key=creds["Credentials"]["SecretKey"],
-        aws_session_token=creds["Credentials"]["SessionToken"],
-    )
+    identityId, session = usersession.get_user_id_and_session(
+            event["headers"]["Authorization"],
+            event["requestContext"]["accountId"]
+            )
+    s3 = session.client("s3")
     gen_subfolders = folders(
-        userclient,
+        s3,
         video_bucket_param["Parameter"]["Value"],
         prefix=identityId["IdentityId"] + "/",
     )

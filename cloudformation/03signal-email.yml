@@ -85,23 +85,14 @@ Resources:
         Variables:
           SOURCEEMAIL: !Ref SourceEmail
       Code:
-        ZipFile: |
-          import boto3
-          import os
-          import json
-
-          def lambda_handler(event, context):
-              payload = json.loads(event['Records'][0]['body'])
-              date = payload['date']
-              identityid = payload['identityID']
-              ssm = boto3.client('ssm')
-              video_domain_param = ssm.get_parameter(
-                Name = '/heron/heron-video-domain',
-                WithDecryption = False
-              )
-              video_domain = video_domain_param['Parameter']['Value']
-
-              print(payload)
+        S3Bucket: '{{resolve:ssm:/heron/deploy-resource-bucket-name}}'
+        S3Key: 
+          !Join
+            - '/'
+            - - 'lambdas'
+              - 'heron-signal-email'
+              - '{{resolve:ssm:/heron/latest/lambda-build}}'
+              - 'index.zip'
 
   EmailSQSParameter:
     Type: AWS::SSM::Parameter
