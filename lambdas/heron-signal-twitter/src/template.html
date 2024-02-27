@@ -1,0 +1,66 @@
+<html>
+  <head>
+    <title>Live feed</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="twitter:card" content="player" />
+<meta name="twitter:site" content="@$video_domain" />
+<meta name="twitter:title" content="Live Stream @$twitter_handle" />
+<meta name="twitter:description" content="@$twitter_handle is livestreaming." />
+<meta name="twitter:image" content="https://$video_domain/live.png" />
+<meta name="twitter:player" content="https://$video_domain/$identityid/$date/twitter.html" />
+<meta name="twitter:player:stream" content="https://$video_domain/$identityid/$date/front-out.m3u8">
+<meta name="twitter:player:stream:content_type" content="video/mp4">
+<meta name="twitter:player:width" content="480" />
+<meta name="twitter:player:height" content="600" />
+
+  </head>
+
+  <body>
+    <script src="/hls.js"></script>
+
+    <center>
+      <h1>Live Feed</h1>
+      <b>Front | Back</b></br>
+      <video height="600" id="videofront" controls></video>
+      <video height="600" id="videoback" controls></video>
+    </center>
+
+    <script>
+      const urlParams = new URLSearchParams(window.location.search);
+      const fronturl = '/$identityid/$date/front-out.m3u8'
+      const backurl = '/$identityid/$date/back-out.m3u8'
+
+      var videofront = document.getElementById('videofront');
+      var videoback = document.getElementById('videoback');
+      if (Hls.isSupported()) {
+	// Front Video
+        var hlsfront = new Hls({
+          debug: true,
+        });
+	hlsfront.loadSource(fronturl);
+        hlsfront.attachMedia(videofront);
+        hlsfront.on(Hls.Events.MEDIA_ATTACHED, function () {
+          videofront.play();
+        });
+	// Back Video
+        var hlsback = new Hls({
+          debug: true,
+        });
+        hlsback.loadSource(backurl);
+        hlsback.attachMedia(videoback);
+        hlsback.on(Hls.Events.MEDIA_ATTACHED, function () {
+          videoback.play();
+        });
+      }
+      else if (videofront.canPlayType('application/vnd.apple.mpegurl')) {
+        videofront.src = fronturl;
+        videofront.addEventListener('canplay', function () {
+          videofront.play();
+        });
+        videoback.src = backurl;
+        videoback.addEventListener('canplay', function () {
+          videoback.play();
+        });
+      }
+    </script>
+</html>

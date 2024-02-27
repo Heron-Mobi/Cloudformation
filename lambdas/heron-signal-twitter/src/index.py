@@ -1,7 +1,8 @@
 import boto3
-import os
 import json
 from string import Template
+from tweepyoverrides.tweepyoverrides import TweepyRefreshAuth2UserHandler
+import tweepy
 
 
 def lambda_handler(event, context):
@@ -9,66 +10,70 @@ def lambda_handler(event, context):
     date = payload["date"]
     identityid = payload["identityID"]
     twitter_handle = payload["config"]["twitter-handle"]
-    cam = payload["config"]["camera"]
+
+
+
+
     ssm = boto3.client("ssm")
+    s3 = boto3.client("s3")
+    secretsmanager = boto3.client("secretsmanager")
+
     video_domain_param = ssm.get_parameter(
         Name="/heron/heron-video-domain", WithDecryption=False
-    )
-    video_domain = video_domain_param["Parameter"]["Value"]
-    camtemplate = Template(
-        "".join(
-            (
-                '<html><head><title>Live feed</title><meta charset="utf-8">',
-                '<meta name="viewport" content="width=device-width, initial-scale=1">',
-                '<meta name="twitter:card" content="player" />',
-                '<meta name="twitter:site" content="@$video_domain" />',
-                '<meta name="twitter:title" content="Live Stream @$twitter_handle" />',
-                '<meta name="twitter:description" content="@$twitter_handle is livestreaming $cam camera." />',
-                '<meta name="twitter:image" content="https://$video_domain/live.png" />',
-                '<meta name="twitter:player" content="https://$video_domain/$identityid/$date/$cam-container.html" />',
-                '<meta name="twitter:player:stream" content="https://$video_domain/$identityid/$date/$cam-out.m3u8">',
-                '<meta name="twitter:player:stream:content_type" content="video/mp4">',
-                '<meta name="twitter:player:width" content="480" />',
-                '<meta name="twitter:player:height" content="600" />',
-                '<body><script src="https://${video_domain}/hls.js"></script>',
-                '<center><video height="600" id="video" controls></video></center>',
-                "<head>",
-                "<script>",
-                '  url = "https://${video_domain}/${identityid}/${date}/${cam}-out.m3u8";',
-                '  var video = document.getElementById("video");',
-                "  if (Hls.isSupported()) {",
-                "    var hls = new Hls({",
-                "      debug: true,",
-                "    });",
-                "    hls.loadSource(url);",
-                "    hls.attachMedia(video);",
-                "    hls.on(Hls.Events.MEDIA_ATTACHED, function () {",
-                "      video.play();",
-                "    });",
-                "  }",
-                '  else if (video.canPlayType("application/vnd.apple.mpegurl")) {',
-                "    video.src = url;",
-                '    video.addEventListener("canplay", function () {',
-                "      video.play();",
-                "    });",
-                "  }",
-                "  </script></body></html>",
-            )
-        )
-    )
-    camstring = camtemplate.substitute(
-        date=date,
-        identityid=identityid,
-        twitter_handle=twitter_handle,
-        cam=cam,
-        video_domain=video_domain,
     )
     video_bucket_param = ssm.get_parameter(
         Name="/heron/video-bucket-name", WithDecryption=False
     )
+    config_bucket_param = ssm.get_parameter(
+        Name="/heron/config-bucket-name", WithDecryption=False
+    )
     video_bucket = video_bucket_param["Parameter"]["Value"]
-    indexobject.put(Body=indexstring, ContentType="text/html")
+    config_bucket = config_bucket_param["Parameter"]["Value"]
+    video_domain = video_domain_param["Parameter"]["Value"]
+    twittersecretvalue = secretsmanager.get_secret_value(
+        SecretId="heron/integrations/twitter"
+    )
+    twittersecret = json.loads(twittersecretvalue["SecretString"])
+    dash_domain_param = ssm.get_parameter(
+        Name="/heron/heron-dashboard-domain", WithDecryption=False
+    )
+    dash_domain = dash_domain_param["Parameter"]["Value"]
+    tokenObject = s3.Object(
+        config_bucket,
+        identityid + "/twittertoken",
+    )
+    tokens = json.loads(tokenObject.get()['Body'].read())
+    
+
+
+
+    camtemplate = ""
+    with open('template.html', 'r') as file:
+        camtemplate = Template(file.read())
+   
+    camstring = camtemplate.substitute(
+        date=date,
+        identityid=identityid,
+        twitter_handle=twitter_handle,
+        video_domain=video_domain,
+    )
+    s3 = boto3.resource("s3")
     camobject = s3.Object(
-        bucket_name=video_bucket, key=identityid + "/" + date + "/" + cam + "-cam.html"
+        bucket_name=video_bucket,
+        key=identityid + "/" + date + "/twitter.html"
     )
     camobject.put(Body=camstring, ContentType="text/html")
+
+
+    auth = TweepyRefreshAuth2UserHandler(
+        redirect_uri="https://" + dash_domain + "/integrations/twittertoken",
+        client_id=twittersecret["clientid"],
+        client_secret=twittersecret["clientsecret"],
+        scope=["tweet.write", "offline.access", "tweet.read", "users.read"],
+    )
+    newtokens = auth.refresh_token(tokens['refresh_token'])
+
+    tokenObject.put(Body=json.dumps(newtokens).encode())
+    client = tweepy.Client(bearer_token=tokens['access_token'])
+    resp = client.create_tweet(text="heron test heron test", user_auth=False)
+    print(resp)
