@@ -598,3 +598,9 @@ Resources:
           - '.' 
           - - 'api'
             - !Ref DomainName
+  TweepyLayerParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/heron/heron-lambda-layer-tweepy'
+      Type: String
+      Value: !Ref TweepyLayer

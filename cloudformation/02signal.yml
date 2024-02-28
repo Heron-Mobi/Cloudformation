@@ -78,7 +78,7 @@ Resources:
     Properties:
       Role: !GetAtt LambdaSignalRole.Arn
       Handler: index.lambda_handler
-      Runtime: python3.9
+      Runtime: python3.10
       Timeout: 25
       MemorySize: 128
       Code:
