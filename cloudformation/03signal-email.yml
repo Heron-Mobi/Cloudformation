@@ -69,6 +69,14 @@ Resources:
             Action: 
               - 'ssm:GetParameter'
             Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/heron/heron-video-domain'
+          - Effect: 'Allow'
+            Action: 
+              - 'ses:SendEmail'
+              - 'ses:SendRawEmail'
+            Resource: '*'
+            Condition:
+              StringEquals:
+                'ses:FromAddress': !Ref SourceEmail
       Roles: 
         - !Ref EmailLambdaRole
   LambdaEmail:

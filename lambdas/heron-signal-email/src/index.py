@@ -13,4 +13,30 @@ def lambda_handler(event, context):
     )
     video_domain = video_domain_param["Parameter"]["Value"]
 
-    print(payload)
+    ses = boto3.client("ses")
+    response = ses.send_email(
+        Source=os.environ["SOURCEEMAIL"],
+        Destination={
+            "ToAddresses": [
+                payload["config"]["destination"],
+            ]
+        },
+        Message={
+            "Subject": {
+                "Data": "Update Livestream from heron user",
+            },
+            "Body": {
+                "Text": {
+                    "Data": "There is a live stream going"
+                    + "on now at this link\n"
+                    + "https://"
+                    + video_domain
+                    + "/index.html?identityId="
+                    + identityid
+                    + "&timestamp="
+                    + date,
+                }
+            },
+        }
+    )
+    print(response)
