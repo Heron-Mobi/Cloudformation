@@ -18,6 +18,10 @@ createbootstrap:  ## builds base
 createbase:  ## builds base
 	./scripts/deploy.sh heron-base cloudformation/01base.yml ${REGION} parameters/base.json
 
+.PHONY: uploadplayerassets
+uploadplayerassets:  ## builds base
+	./scripts/uploadplayerassets.sh ${REGION}
+
 .PHONY: createsignal
 createsignal:  ## builds signal sqs
 	./scripts/deploy.sh heron-signal cloudformation/02signal.yml ${REGION}

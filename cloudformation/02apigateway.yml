@@ -173,7 +173,6 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       Description: AWS Lambda function
-      FunctionName: 'CORS-Options'
       Handler: index.handler
       MemorySize: 256
       Role: !GetAtt LambdaRole.Arn
@@ -276,7 +275,6 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       Description: GetUserVideos
-      FunctionName: 'GetVideos'
       Handler: index.handler
       MemorySize: 256
       Role: !GetAtt LambdaRole.Arn
@@ -297,7 +295,6 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       Description: Delete a user video
-      FunctionName: 'DeleteVideoFunction'
       Handler: index.handler
       MemorySize: 256
       Role: !GetAtt LambdaRole.Arn
@@ -387,7 +384,6 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       Description: Get Signals Config
-      FunctionName: 'GetSignalsFunction'
       Handler: index.handler
       MemorySize: 256
       Role: !GetAtt LambdaRole.Arn
@@ -410,7 +406,6 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       Description: Set Signals Config
-      FunctionName: 'SetSignalsFunction'
       Handler: index.handler
       MemorySize: 256
       Role: !GetAtt LambdaRole.Arn
@@ -541,7 +536,6 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       Description: Get Twitter Link For Auth
-      FunctionName: 'GetTwitterLinkFunction'
       Handler: index.handler
       MemorySize: 256
       Role: !GetAtt TwitterLambdaRole.Arn
@@ -563,7 +557,6 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       Description: Set Twitter Token For Auth
-      FunctionName: 'SetTwitterTokenFunction'
       Handler: index.handler
       MemorySize: 256
       Role: !GetAtt TwitterLambdaRole.Arn
