@@ -23,6 +23,8 @@ def lambda_handler(event, context):
     if submitteduuid != uuid:
         print("Illegal ID " + submitteduuid)
         return
+    else:
+        obj.delete()
     try:
         obj = s3.Object(config_bucket, identityid + "/config.json").get()
     except botocore.exceptions.ClientError as e:
