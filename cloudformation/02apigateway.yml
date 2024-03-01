@@ -178,6 +178,9 @@ Resources:
       Role: !GetAtt LambdaRole.Arn
       Runtime: python3.10
       Timeout: 60
+      Environment:
+        Variables:
+          ORIGINDOMAIN: !Sub 'dashboard.${DomainName}'
       Code:
         S3Bucket: '{{resolve:ssm:/heron/deploy-resource-bucket-name}}'
         S3Key: 

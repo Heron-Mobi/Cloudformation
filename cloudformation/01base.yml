@@ -19,6 +19,14 @@ Resources:
         - AttributeDataType: String
           Name: email
           Required: false
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      AutoVerifiedAttributes:
+        - email
+      VerificationMessageTemplate:
+        DefaultEmailOption: CONFIRM_WITH_CODE
+      EmailConfiguration:
+        EmailSendingAccount: COGNITO_DEFAULT
   UserPoolClient:
     Type: AWS::Cognito::UserPoolClient
     Properties:
