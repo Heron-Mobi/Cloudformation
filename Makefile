@@ -42,19 +42,12 @@ createapigateway:  ## builds apigateway
 createdashboard:  ## builds dashboard
 	./scripts/deploy.sh heron-dashboard cloudformation/03dashboard.yml ${REGION} parameters/base.json
 
-.PHONY: buildcore
-buildcore: | createbase createsignal createapigateway ## wait builds core in order
-
 .PHONY: buildsignalers
-buildsignalers: createsignalemail createsignaltwitter
+createsignalers: createsignalemail createsignaltwitter
 
 
 .PHONY: buildlambdas
 buildlambdas:
 	./scripts/buildlambda.sh ${REGION}
-
-
-.PHONY: all
-all: | buildcore buildsignalers
 
 
