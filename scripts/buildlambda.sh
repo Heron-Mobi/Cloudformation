@@ -23,7 +23,7 @@ do
 	cd ..
 done
 echo ${destination}
-bucket=$(aws cloudformation describe-stacks --region $1 \
+bucket=$(aws cloudformation describe-stacks --region ${REGION} \
         --stack-name heron-bootstrap \
 	--query 'Stacks[0].Outputs[0].OutputValue' --output text)
 cd ${destination}
