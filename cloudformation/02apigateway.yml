@@ -105,6 +105,8 @@ Resources:
                   - !GetAtt PutSignals.Arn
                   - !GetAtt GetTwitterLink.Arn
                   - !GetAtt SetTwitterToken.Arn
+                  - !GetAtt GetSQS.Arn
+                  - !GetAtt SetSQS.Arn
 
   LambdaRole:
     Type: AWS::IAM::Role
@@ -168,6 +170,33 @@ Resources:
                 - 'secretsmanager:GetSecretValue'
               Resource:
                 - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:heron/integrations/twitter-??????'
+  SQSLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service:
+                - 'lambda.amazonaws.com'
+            Action:
+              - 'sts:AssumeRole'
+      Path: '/'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: TwitterLambdaSSmandSecrets
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: 'Allow'
+              Action: 
+                - 'ssm:GetParameter'
+              Resource:
+                - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/heron/identity-pool-id'
+                - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/heron/user-pool-id'
+
 
   CORSOptions:
     Type: AWS::Lambda::Function
@@ -577,7 +606,116 @@ Resources:
       Layers:
         - !Ref TweepyLayer
         - !Ref UserSessionLayer
-  
+
+
+  IntegrationExternalSQSResource:
+    Type: 'AWS::ApiGateway::Resource'
+    Properties:
+      ParentId: !GetAtt IntegrationResource.ResourceId
+      RestApiId: !Ref HeronApi
+      PathPart: 'external'
+
+  ExternalSQSCORSMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      Integration:
+        ConnectionType: INTERNET
+        Credentials: !GetAtt HeronApiIamRole.Arn
+        IntegrationHttpMethod: POST
+        PassthroughBehavior: WHEN_NO_MATCH
+        TimeoutInMillis: 29000
+        Type: AWS_PROXY
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CORSOptions.Arn}/invocations'
+      OperationName: 'CORS Options'
+      ResourceId: !Ref IntegrationExternalSQSResource
+      RestApiId: !Ref HeronApi
+
+  ExternalSQSGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: GET
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref Authorizer
+      Integration:
+        ConnectionType: INTERNET
+        Credentials: !GetAtt HeronApiIamRole.Arn
+        IntegrationHttpMethod: POST
+        PassthroughBehavior: WHEN_NO_MATCH
+        TimeoutInMillis: 29000
+        Type: AWS_PROXY
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetSQS.Arn}/invocations'
+      OperationName: 'lambda'
+      ResourceId: !Ref IntegrationExternalSQSResource
+      RestApiId: !Ref HeronApi
+
+  ExternalSQSSetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: POST
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref Authorizer
+      Integration:
+        ConnectionType: INTERNET
+        Credentials: !GetAtt HeronApiIamRole.Arn
+        IntegrationHttpMethod: POST
+        PassthroughBehavior: WHEN_NO_MATCH
+        TimeoutInMillis: 29000
+        Type: AWS_PROXY
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${SetSQS.Arn}/invocations'
+      OperationName: 'lambda'
+      ResourceId: !Ref IntegrationExternalSQSResource
+      RestApiId: !Ref HeronApi
+
+  GetSQS:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Get SQS for external consumption
+      Handler: index.handler
+      MemorySize: 256
+      Role: !GetAtt SQSLambdaRole.Arn
+      Runtime: python3.10
+      Timeout: 60
+      Code:
+        S3Bucket: '{{resolve:ssm:/heron/deploy-resource-bucket-name}}'
+        S3Key: 
+          !Join
+            - '/'
+            - - 'lambdas'
+              - 'api-get-sqs'
+              - '{{resolve:ssm:/heron/latest/lambda-build}}'
+              - 'index.zip'
+      Layers:
+        - !Ref UserSessionLayer
+
+  SetSQS:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Set SQS for external consumtion
+      Handler: index.handler
+      MemorySize: 256
+      Role: !GetAtt SQSLambdaRole.Arn
+      Runtime: python3.10
+      Timeout: 450
+      Code:
+        S3Bucket: '{{resolve:ssm:/heron/deploy-resource-bucket-name}}'
+        S3Key: 
+          !Join
+            - '/'
+            - - 'lambdas'
+              - 'api-set-sqs'
+              - '{{resolve:ssm:/heron/latest/lambda-build}}'
+              - 'index.zip'
+      Layers:
+        - !Ref UserSessionLayer
+
+
   ApiGatewayParameter:
     Type: AWS::SSM::Parameter
     Properties:

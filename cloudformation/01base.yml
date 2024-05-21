@@ -154,6 +154,29 @@ Resources:
       Roles: 
         - !Ref HeronUserRole
 
+  HeronUserSQSPolicy: 
+    Type: AWS::IAM::Policy
+    Properties: 
+      PolicyName: 'SQSAccess'
+      PolicyDocument: 
+        Version: '2012-10-17'
+        Statement: 
+          - Effect: 'Allow'
+            Action: 
+            - 'sqs:CreateQueue'
+            - 'sqs:DeleteQueue'
+            - 'sqs:ListQueues'
+            - 'sqs:ReceiveMessage'
+            - 'sqs:DeleteMessage'
+            Resource:
+              !Join
+                - '-'
+                - - !Sub 'arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:external-sqs'
+                  - '${cognito-identity.amazonaws.com:sub}'
+      Roles: 
+        - !Ref HeronUserRole
+
+
   ConfigBucket:
     Type: AWS::S3::Bucket
     Properties:
