@@ -1,0 +1,69 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  IdentityID:
+    Type: String
+    Default: 'eu-central-1:1c219830-ee61-c14b-633c-a53e2c120a31'
+
+Resources:
+  HeronUserExternalSQSRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName:
+        !Join
+          - '-'
+          - - 'external-sqs'
+            - !Select 
+              - 0
+              - !Split
+                - ":"
+                - !Ref IdentityID
+            - !Select 
+              - 1
+              - !Split
+                - ":"
+                - !Ref IdentityID
+
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: Allow
+            Principal: 
+              Federated: cognito-identity.amazonaws.com
+            Action: 
+              - 'sts:AssumeRoleWithWebIdentity'
+            Condition:
+              StringEquals:
+                'cognito-identity.amazonaws.com:aud': '{{resolve:ssm:/heron/identity-pool-id}}'
+                'cognito-identity.amazonaws.com:sub': !Ref IdentityID
+      PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/SQSLambdaRolePermBoundary'
+      Policies:
+        - PolicyName: sqsaccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: 
+                - 'sqs:ReceiveMessage'
+                - 'sqs:DeleteMessage'
+                - 'sqs:GetQueueAttributes'
+                - 'sqs:ChangeMessageVisibility'
+                Resource: !GetAtt ExternalSQSQueue.Arn
+
+  ExternalSQSQueue: 
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: 
+        !Join
+          - '-'
+          - - 'lambdasignal-external-sqs'
+            - !Select 
+              - 0
+              - !Split
+                - ":"
+                - !Ref IdentityID
+            - !Select 
+              - 1
+              - !Split
+                - ":"
+                - !Ref IdentityID
+

@@ -185,18 +185,138 @@ Resources:
       Path: '/'
       ManagedPolicyArns:
         - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      PermissionsBoundary: !Ref SQSLambdaRolePermBoundary
       Policies:
-        - PolicyName: TwitterLambdaSSmandSecrets
+        - PolicyName: SQSLambdaSSM
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
             - Effect: 'Allow'
               Action: 
                 - 'ssm:GetParameter'
+                - 'ssm:GetParameters'
               Resource:
                 - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/heron/identity-pool-id'
                 - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/heron/user-pool-id'
+                - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/heron/config-bucket-name'
+                - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/heron/heron-signal-lambda-rolename'
+        - PolicyName: SQSLambdaGetQueues
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: 'Allow'
+              Action: 
+                - 'sqs:GetQueueUrl'
+              Resource:
+                - !Sub 'arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:lambdasignal-external-sqs-*'
+        - PolicyName: SQSBuildCloudformation
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: 'Allow'
+              Action: 
+                - 'cloudformation:CreateStack'
+                - 'cloudformation:DeleteStack'
+                - 'cloudformation:DescribeStacks'
+              Resource:
+                - !Sub 'arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/external-sqs-*'
+        - PolicyName: SQSBuildCloudformationQueue
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: 'Allow'
+              Action: 
+                - 'sqs:CreateQueue'
+                - 'sqs:DeleteQueue'
+                - 'sqs:GetQueueAttributes'
+              Resource:
+                - !Sub 'arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:lambdasignal-external-sqs-*'
+        - PolicyName: SQSBuildCloudformationIAM
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: 'Allow'
+              Action: 
+                - 'iam:CreateRole'
+                - 'iam:DeleteRole'
+                - 'iam:GetRole'
+                - 'iam:DeleteRolePolicy'
+                - 'iam:PutRolePolicy'
+              Resource:
+                - !Sub 'arn:aws:iam::${AWS::AccountId}:role/external-sqs-*'
+  SQSLambdaRolePermBoundary:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: 'SQSLambdaRolePermBoundary'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: BroadSQSDeployPerms
+            Effect: Allow
+            Action:
+              - 'logs:*'
+              - 'ssm:*'
+              - 'sqs:*'
+              - 'cloudformation:*'
+              - 'iam:GetRole'
+            Resource: '*'
+          - Sid: DenyPermBoundaryIAMPolicyAlteration
+            Effect: Deny
+            Action:
+              - 'iam:DeletePolicy'
+              - 'iam:DeletePolicyVersion'
+              - 'iam:CreatePolicyVersion'
+              - 'iam:SetDefaultPolicyVersion'
+            Resource:
+              - !Sub 'arn:aws:iam::${AWS::AccountId}:policy/SQSLambdaRolePermBoundary'
+          - Sid: DenyAccessIfRequiredPermBoundaryIsNotBeingApplied
+            Effect: Deny
+            Action:
+              - 'iam:PutRolePermissionsBoundary'
+            Resource:
+              - !Sub 'arn:aws:iam::${AWS::AccountId}:role/*'
+            Condition:
+              StringNotEquals:
+                iam:PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/SQSLambdaRolePermBoundary'
+          - Sid: AllowRoleCreationWithOutPermBoundary
+            Effect: Allow
+            Action:
+              - 'iam:CreateRole'
+              - 'iam:PutRolePolicy'
+              - 'iam:DeleteRole'
+            Resource:
+              - !Sub 'arn:aws:iam::${AWS::AccountId}:role/external-sqs-*'
+          - Sid: DenyRoleCreationWithOutPermBoundary
+            Effect: Deny
+            Action:
+              - 'iam:CreateRole'
+            Resource:
+              - '*'
+            Condition:
+              StringNotEquals:
+                iam:PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/SQSLambdaRolePermBoundary'
+          - Sid: AllowPolicyDeleteForRole
+            Effect: Allow
+            Action:
+              - 'iam:DeleteRolePolicy'
+            Resource:
+              - !Sub 'arn:aws:iam::${AWS::AccountId}:role/external-sqs-*'
 
+
+  LambdaSignalExternalSQSPolicy:
+    Type: AWS::IAM::Policy
+    Properties: 
+      Roles:
+        - '{{resolve:ssm:/heron/heron-signal-lambda-rolename}}'
+      PolicyName: 'lambdasignal-external-sqs'
+      PolicyDocument: 
+        Version: '2012-10-17'
+        Statement: 
+          - Effect: 'Allow'
+            Action: 
+              - 'sqs:SendMessage'
+            Resource:
+                - !Sub 'arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:lambdasignal-external-sqs-*'
 
   CORSOptions:
     Type: AWS::Lambda::Function

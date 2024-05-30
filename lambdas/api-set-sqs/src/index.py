@@ -1,4 +1,6 @@
 import json
+import boto3
+import botocore
 import usersession.usersession as usersession
 
 
@@ -17,8 +19,62 @@ def handler(event, context):
             event["headers"]["Authorization"],
             event["requestContext"]["accountId"]
             )
-    sqs = session.client("sqs")
-    queues = sqs.list_queues(QueueNamePrefix='external-sqs-' + identityId)
 
-    response["body"] = json.dumps(queues['QueueUrls'][0])
+    template = 'sqsstack.yaml'
+    stack = 'external-sqs-' + identityId['IdentityId'].replace(':', '-')
+    yamlfile = open(template, 'r', encoding="utf-8").read()
+    cloudformation = boto3.client('cloudformation')
+
+    action = event["body"].replace('"', '')
+    print(action)
+    if action == "create":
+        try:
+            cloudformation.create_stack(
+                StackName=stack,
+                TemplateBody=yamlfile,
+                Parameters=[{
+                    'ParameterKey': 'IdentityID',
+                    'ParameterValue': identityId['IdentityId']
+                }],
+                Capabilities=[
+                    'CAPABILITY_IAM',
+                    'CAPABILITY_NAMED_IAM'
+                ],
+                OnFailure='DELETE'
+            )
+            response["body"] = json.dumps({
+                    "sqsdeployed": True,
+                    "inprogress": True,
+                    "error": ""
+                })
+
+        except botocore.exceptions.ClientError as e:
+            response["body"] = json.dumps({
+                "sqsdeployed": False,
+                "inprogress": False,
+                "error": e.response["Error"]["Code"]
+            })
+    elif action == "delete":
+        try:
+            cloudformation.delete_stack(
+                StackName=stack,
+            )
+            response["body"] = json.dumps({
+                    "sqsdeployed": False,
+                    "inprogress": True,
+                    "error": ""
+                })
+        except botocore.exceptions.ClientError as e:
+            response["body"] = json.dumps({
+                "sqsdeployed": True,
+                "inprogress": False,
+                "error": e.response["Error"]["Code"]
+            })
+
+    else:
+        response["body"] = json.dumps({
+                "sqsdeployed": True,
+                "inprogress": False,
+                "error": "invalid choice",
+            })
     return response

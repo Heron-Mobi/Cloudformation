@@ -12,4 +12,4 @@ fi
 
 aws cloudformation deploy --stack-name "${NAME}" \
 	--region ${REGION} --template-file ${TEMPLATE} \
-	--capabilities CAPABILITY_IAM${PARAMSFILE}
+	--capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM${PARAMSFILE}
