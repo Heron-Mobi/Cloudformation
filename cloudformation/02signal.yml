@@ -65,6 +65,12 @@ Resources:
               - 'arn:aws:s3:::{{resolve:ssm:/heron/config-bucket-name}}/*/config.json'
           - Effect: 'Allow'
             Action: 
+              - 's3:ListBucket'
+            Resource: 
+              - 'arn:aws:s3:::{{resolve:ssm:/heron/config-bucket-name}}/*'
+              - 'arn:aws:s3:::{{resolve:ssm:/heron/config-bucket-name}}/'
+          - Effect: 'Allow'
+            Action: 
               - 's3:DeleteObject'
             Resource: 
               - 'arn:aws:s3:::{{resolve:ssm:/heron/config-bucket-name}}/*/uuid'

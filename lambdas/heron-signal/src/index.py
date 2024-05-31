@@ -17,8 +17,16 @@ def lambda_handler(event, context):
     identityid = payload["identityID"]
     submitteduuid = payload["uuid"]
     s3 = boto3.resource("s3")
-    obj = s3.Object(config_bucket, identityid + "/uuid").get()
-    uuid = obj["Body"].read().decode("utf-8")
+    try:
+        obj = s3.Object(config_bucket, identityid + "/uuid")
+        objcontents = obj.get()
+    except botocore.exceptions.ClientError as e:
+        if e.response["Error"]["Code"] == "AccessDenied":
+            print("No uuid file found skipping")
+            return
+        else:
+            raise
+    uuid = objcontents["Body"].read().decode("utf-8")
     print(uuid)
     if submitteduuid != uuid:
         print("Illegal ID " + submitteduuid)
@@ -34,13 +42,36 @@ def lambda_handler(event, context):
         else:
             raise
     config = json.loads(obj["Body"].read().decode("utf-8"))
+    sqserrors = {}
+    sqs = boto3.client("sqs")
     for signal in config["signals"]:
         signaltargetsqs_param = ssm.get_parameter(
             Name="/heron/signal-lambda/" + signal["signal-type"]
         )
-        sqs = boto3.client("sqs")
         message = {"config": signal["config"], "date": date, "identityID": identityid}
+        try:
+            sqs.send_message(
+                QueueUrl=signaltargetsqs_param["Parameter"]["Value"],
+                MessageBody=json.dumps(message),
+            )
+        except botocore.exceptions.ClientError as e:
+            print(e)
+            sqserrors[signal["config"]] = e
+    accountid = event["Records"][0]["eventSourceARN"].split(":")[4]
+    region = os.environ["AWS_REGION"]
+    usersqs = 'lambdasignal-external-sqs-' + identityid.replace(':', '-')
+    usersqsurl = "https://sqs." + region + ".amazonaws.com/" + accountid + "/" + usersqs
+    message = {"config": "external-sqs", "date": date, "identityID": identityid}
+    try:
         sqs.send_message(
-            QueueUrl=signaltargetsqs_param["Parameter"]["Value"],
+            QueueUrl=usersqsurl,
             MessageBody=json.dumps(message),
         )
+    except botocore.exceptions.ClientError as e:
+        print(e)
+        if e.response["Error"]["Code"] != 'QueueDoesNotExist':
+            sqserrors["external-sqs"] = e
+
+    if sqserrors:
+        print(sqserrors)
+        raise ValueError('SQS write errors.')
